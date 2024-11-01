@@ -43,7 +43,10 @@ def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=1
     # print(score)
 
 
-    t_error = ((t_result['member_diffusions'] - t_result['member_internal_samples']) ** 2).sum(dim=0)
+    member_t_error = ((t_result['member_diffusions'] - t_result['member_internal_samples']) ** 2).sum(dim=0)
+    nonmember_t_error = ((t_result['nonmember_diffusions'] - t_result['nonmember_internal_samples']) ** 2).sum(dim=0)
+    # print(member_t_error[:10])
+    # print(nonmember_t_error[:10])
     if not nns:
         member_scores, nonmember_scores = naive_statistic_attack(t_result, metric='l2')
     else:
@@ -99,7 +102,6 @@ def get_intermediate_results(model, diffusion, data_loader, t_sec, timestep):
         x_num = x[:, :diffusion.num_numerical_features]
         x_cat = x[:, diffusion.num_numerical_features:]
         log_x_cat = index_to_log_onehot(x_cat.long(), diffusion.num_classes)
-        print(log_x_cat)
         x_in = torch.cat([x_num, log_x_cat], dim=1)
 
         x_sec = ddim_multistep(model, x_in, t_c=0, target_steps=target_steps)
