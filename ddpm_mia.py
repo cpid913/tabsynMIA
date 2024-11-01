@@ -18,7 +18,7 @@ from baselines.tabddpm.models.utils import *
 import src
 from utils_train import make_dataset
 
-def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=128, nns=False):
+def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=128):
     # load splits
     train_loader = src.prepare_fast_dataloader(dataset, split='train', batch_size=batch_size)
     hold_out_loader = src.prepare_fast_dataloader(dataset, split='test', batch_size=batch_size)
@@ -43,10 +43,23 @@ def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=1
     # print(score)
 
 
-    member_t_error = ((t_result['member_diffusions'] - t_result['member_internal_samples']) ** 2).sum(dim=0)
-    nonmember_t_error = ((t_result['nonmember_diffusions'] - t_result['nonmember_internal_samples']) ** 2).sum(dim=0)
-    # print(member_t_error[:10])
-    # print(nonmember_t_error[:10])
+    member_t_error = ((t_result['member_internal_samples'] - t_result['member_diffusions']) ** 2).sum(dim=0)
+    nonmember_t_error = ((t_result['nonmember_internal_samples'] - t_result['nonmember_diffusions']) ** 2).sum(dim=0)
+    relative_t_error = torch.div(member_t_error, nonmember_t_error)
+    # print(member_t_error)
+    # print(nonmember_t_error)
+    # print(relative_t_error)
+
+    stat_result = evaluate(t_result, nns=False)
+    nns_result = evaluate(t_result, nns=True)
+
+    plt.plot([0, 1], [0, 1], linestyle='dashed', label="random guess")
+    plt.plot(stat_result['fpr_list'], stat_result['tpr_list'], label=f"SecMI-stat: {stat_result['auc']:.2f}")
+    plt.plot(nns_result['fpr_list'], nns_result['tpr_list'], label=f"SecMI-nns: {nns_result['auc']:.2f}")
+    plt.legend(loc="lower right")
+    plt.show()
+
+def evaluate(t_result, nns=False):
     if not nns:
         member_scores, nonmember_scores = naive_statistic_attack(t_result, metric='l2')
     else:
@@ -78,17 +91,7 @@ def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=1
             if k in keys:
                 print(f'{k}: {v}')
 
-    # print('#' * 20 + ' SecMI_stat ' + '#' * 20)
     return exp_data
-    # plt.plot(exp_data['member_scores'].cpu())
-    # plt.show()
-
-    # stat_results = execute_attack(t_results, type='stat')
-    # print('#' * 20 + ' SecMI_stat ' + '#' * 20)
-    # print_result(stat_results)
-    # nns_results = execute_attack(t_results, type='nns')
-    # print('#' * 20 + ' SecMI_NNs ' + '#' * 20)
-    # print_result(nns_results)
 
 def get_intermediate_results(model, diffusion, data_loader, t_sec, timestep):
     target_steps = list(range(0, t_sec, timestep))[1:]
@@ -464,15 +467,7 @@ if __name__ == '__main__':
     diffusion = diffusion.to(device)
     diffusion.eval()
 
-    stat_result = secmi_attack(model, diffusion, dataset, nns=False)
-    nns_result = secmi_attack(model, diffusion, dataset, nns=True)
-
-    plt.plot([0, 1], [0, 1], linestyle='dashed', label="random guess")
-    plt.plot(stat_result['fpr_list'], stat_result['tpr_list'], label=f"SecMI-stat: {stat_result['auc']:.2f}")
-    plt.plot(nns_result['fpr_list'], nns_result['tpr_list'], label=f"SecMI-nns: {nns_result['auc']:.2f}")
-    plt.legend(loc="lower right")
-    plt.show()
-
+    secmi_attack(model, diffusion, dataset)
 
 
 
