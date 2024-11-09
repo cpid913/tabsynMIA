@@ -18,6 +18,7 @@ from baselines.tabddpm.models.utils import *
 import src
 from utils_train import make_dataset
 
+
 def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=128, eval=True):
     # load splits
     train_loader = src.prepare_fast_dataloader(dataset, split='train', batch_size=batch_size)
@@ -38,9 +39,18 @@ def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=1
     t_result['nonmember_diffusions'] = t_result['nonmember_diffusions'].to(device).float()
     t_result['nonmember_internal_samples'] = t_result['nonmember_internal_samples'].to(device).float()
 
-    member_t_error = ((t_result['member_internal_samples'] - t_result['member_diffusions']) ** 2).flatten().sum(dim=0)
-    nonmember_t_error = ((t_result['nonmember_internal_samples'] - t_result['nonmember_diffusions']) ** 2).flatten().sum(dim=0)
-    relative_t_error = torch.div(nonmember_t_error, member_t_error)
+    member_t_error = ((t_result['member_internal_samples'] - t_result['member_diffusions']) ** 2).sum(dim=0)
+    nonmember_t_error = ((t_result['nonmember_internal_samples'] - t_result['nonmember_diffusions']) ** 2).sum(dim=0)
+    relative_t_error = torch.div(nonmember_t_error, member_t_error)[:diffusion.num_numerical_features]
+    # print(member_t_error[:diffusion.num_numerical_features])
+    # print(nonmember_t_error[:diffusion.num_numerical_features])
+    # print(relative_t_error)
+
+    member_t_error_sum = ((t_result['member_internal_samples'] - t_result['member_diffusions']) ** 2).flatten().sum(
+        dim=0)
+    nonmember_t_error_sum = (
+                (t_result['nonmember_internal_samples'] - t_result['nonmember_diffusions']) ** 2).flatten().sum(dim=0)
+    relative_t_error_sum = torch.div(nonmember_t_error_sum, member_t_error_sum)
 
     if eval:
         stat_result = evaluate(t_result, nns=False)
@@ -48,14 +58,14 @@ def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=1
 
         plt.plot([0, 1], [0, 1], linestyle='dashed', label="random guess")
         plt.plot(stat_result['fpr_list'], stat_result['tpr_list'], label=f"SecMI-stat: {stat_result['auc']:.2f}")
-        plt.plot(nns_result['fpr_list'], nns_result['tpr_list'], label=f"SecMI-nns: {nns_result['auc']:.2f}")
+        plt.plot(nns_result['fpr_list'], nns_result['tpr_list'], label=f"SecMI-NNs: {nns_result['auc']:.2f}")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
         plt.legend(loc="lower right")
         plt.show()
 
-    print(relative_t_error)
-    return relative_t_error
+    return member_t_error, nonmember_t_error
+
 
 def evaluate(t_result, nns=False):
     if not nns:
@@ -91,6 +101,7 @@ def evaluate(t_result, nns=False):
 
     return exp_data
 
+
 def get_intermediate_results(model, diffusion, data_loader, t_sec, timestep):
     target_steps = list(range(0, t_sec, timestep))[1:]
 
@@ -107,8 +118,10 @@ def get_intermediate_results(model, diffusion, data_loader, t_sec, timestep):
 
         x_sec = ddim_multistep(model, diffusion, x_in, t_c=0, target_steps=target_steps)
         x_sec = x_sec['x_t_target']
-        x_sec_recon = ddim_singlestep(model, diffusion, x_sec, t_c=target_steps[-1], t_target=target_steps[-1] + timestep)
-        x_sec_recon = ddim_singlestep(model, diffusion, x_sec_recon['x_t_target'], t_c=target_steps[-1] + timestep, t_target=target_steps[-1])
+        x_sec_recon = ddim_singlestep(model, diffusion, x_sec, t_c=target_steps[-1],
+                                      t_target=target_steps[-1] + timestep)
+        x_sec_recon = ddim_singlestep(model, diffusion, x_sec_recon['x_t_target'], t_c=target_steps[-1] + timestep,
+                                      t_target=target_steps[-1])
         x_sec_recon = x_sec_recon['x_t_target']
 
         internal_diffusion_list.append(x_sec)
@@ -118,6 +131,7 @@ def get_intermediate_results(model, diffusion, data_loader, t_sec, timestep):
         'internal_diffusions': torch.cat(internal_diffusion_list),
         'internal_denoise': torch.cat(internal_denoised_list)
     }
+
 
 def ddim_singlestep(model, diffusion, x, t_c, t_target, requires_grad=False, device='cuda'):
     t_c = x.new_ones([x.shape[0], ], dtype=torch.long) * (t_c)
@@ -143,12 +157,12 @@ def ddim_singlestep(model, diffusion, x, t_c, t_target, requires_grad=False, dev
     alphas_prod_t_target = extract(alphas_prod, t=t_target, x_shape=x_num.shape)
     epsilon_num = epsilon[:, :diffusion.num_numerical_features]
 
-    # pred_x_0 = (x - ((1 - alphas_t_c).sqrt() * epsilon)) / (alphas_t_c.sqrt())
-    # x_t_target = alphas_t_target.sqrt() * pred_x_0 \
-    #              + (1 - alphas_t_target).sqrt() * epsilon
-    pred_x_0 = (x_num - (betas_t_c/((1 - alphas_prod_t_c).sqrt()) * epsilon_num)) / (alphas_t_c.sqrt())
+    pred_x_0 = (x_num - ((1 - alphas_prod_t_c).sqrt() * epsilon_num)) / alphas_prod_t_c.sqrt()
     x_t_target_num = alphas_prod_t_target.sqrt() * pred_x_0 \
-                 + (1 - alphas_prod_t_target).sqrt() * epsilon_num
+                     + (1 - alphas_prod_t_target).sqrt() * epsilon_num
+    # pred_x_0 = (x_num - (betas_t_c/((1 - alphas_prod_t_c).sqrt()) * epsilon_num)) / (alphas_t_c.sqrt())
+    # x_t_target_num = alphas_prod_t_target.sqrt() * pred_x_0 \
+    #              + (1 - alphas_prod_t_target).sqrt() * epsilon_num
 
     x_t_target = torch.concat([x_t_target_num, x_cat], 1)
     return {
@@ -167,6 +181,7 @@ def ddim_multistep(model, diffusion, x, t_c, target_steps, clip=False, device='c
         result['x_t_target'] = torch.clip(result['x_t_target'], -1, 1)
 
     return result
+
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     """
@@ -193,6 +208,7 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
 
+
 def extract(v, t, x_shape):
     """
     Extract some coefficients at specified timesteps, then reshape to
@@ -200,6 +216,7 @@ def extract(v, t, x_shape):
     """
     out = torch.gather(v, index=t, dim=0).float()
     return out.view([t.shape[0]] + [1] * (len(x_shape) - 1))
+
 
 def nns_attack(t_results, train_portion=0.2, device='cuda'):
     n_epoch = 15
@@ -339,6 +356,7 @@ def nn_eval(model, data_loader, device='cuda'):
     # print(f'Test: \t Loss: {mean_loss:.4f} \t Acc: {acc / total:.4f} \t')
     return mean_loss, acc / total
 
+
 class MIDataset():
 
     def __init__(self, member_data, nonmember_data, member_label, nonmember_label):
@@ -351,6 +369,7 @@ class MIDataset():
     def __getitem__(self, item):
         data = self.data[item]
         return data, self.label[item]
+
 
 def roc(member_scores, nonmember_scores, n_points=1000):
     max_asr = 0
@@ -385,6 +404,7 @@ def roc(member_scores, nonmember_scores, n_points=1000):
     auc = metrics.auc(FPR_list, TPR_list)
     return auc, max_asr, torch.from_numpy(FPR_list), torch.from_numpy(TPR_list), max_threshold
 
+
 def naive_statistic_attack(t_results, metric='l2'):
     def measure(diffusion, sample, metric, device='cuda'):
         diffusion = diffusion.to(device).float()
@@ -397,6 +417,8 @@ def naive_statistic_attack(t_results, metric='l2'):
 
         if metric == 'l2':
             score = ((diffusion - sample) ** 2).flatten(1).sum(dim=-1)
+        elif metric == 'mixed':
+            score = ((diffusion - sample) ** 2).sum(dim=-1)
         else:
             raise NotImplementedError
 
@@ -409,23 +431,41 @@ def naive_statistic_attack(t_results, metric='l2'):
                                metric=metric)
     return member_scores, nonmember_scores
 
-def t_error_comparison(maxt_sec=100):
-    relative_t = []
-    timestep = 10
-    for t in range(timestep * 2, maxt_sec+timestep, timestep):
-        print("calculating relative t-error at timestep = " + str(t))
-        relative_t.append(secmi_attack(model, diffusion, dataset, timestep=timestep, t_sec=t, eval=False).cpu())
 
-    plt.bar(list(map(str, range(timestep * 2, maxt_sec+timestep, timestep))), relative_t, label="Hold-out Set", width=1, edgecolor='white')
-    plt.autoscale(enable=True, axis='x', tight=True)
-    plt.plot([str(timestep * 2), str(maxt_sec)], [1, 1], label="Member Set", linestyle="dashed", color="black")
+def t_error_comparison(maxt_sec, model, diffusion, dataset, timestep=10):
+    relative_t_column = []
+    relative_t_sum = []
+    for t in range(timestep * 2, maxt_sec + timestep, timestep):
+        print("calculating relative t-error at timestep = " + str(t))
+        member_t, nonmember_t = secmi_attack(model, diffusion, dataset, timestep=timestep, t_sec=t, eval=False)
+        relative_t_column.append(torch.div(nonmember_t, member_t)[:diffusion.num_numerical_features].cpu())
+        relative_t_sum.append(torch.div(nonmember_t.sum(), member_t.sum()).cpu())
+
+    # plot relative_t_sum
+    # plt.bar(list(map(str, range(timestep * 2, maxt_sec + timestep, timestep))), relative_t_sum, label="Hold-out Set",
+    #         width=1, edgecolor='white')
+    # plt.plot([str(timestep * 2), str(maxt_sec)], [1, 1], label="Member Set", linestyle="dashed", color="black")
+    # plt.legend(loc="upper right")
+    # plt.ylabel("Relative t-error")
+    # plt.xlabel("Timestep")
+    # plt.show()
+
+    # plot relative_t for each column
+    # columns = ['Column ' + str(i) for i in range(diffusion.num_numerical_features)]
+    # plt.plot(list(map(str, range(timestep * 2, maxt_sec+timestep, timestep))), relative_t_column, label=columns)
+    # plt.plot([str(timestep * 2), str(maxt_sec)], [1, 1], label="Member Set", linestyle="dashed", color="black")
+    # plt.legend(loc="upper right")
+    # plt.ylabel("Relative t-error")
+    # plt.xlabel("Timestep")
+    # plt.show()
+
+    columns = ['Column ' + str(i) for i in range(diffusion.num_numerical_features)]
+    plt.boxplot(np.array(relative_t_column), tick_labels=columns)
+    plt.plot(np.ones(diffusion.num_numerical_features + 1), label="Member Set", linestyle="dashed", color="black")
     plt.legend(loc="upper right")
     plt.ylabel("Relative t-error")
-    plt.xlabel("Timestep")
+    # plt.xticks(range(diffusion.num_numerical_features), columns)
     plt.show()
-
-
-
 
 if __name__ == '__main__':
     '''
@@ -449,8 +489,8 @@ if __name__ == '__main__':
     dataset = make_dataset(
         real_data_path,
         T,
-        task_type = raw_config['task_type'],
-        change_val = False,
+        task_type=raw_config['task_type'],
+        change_val=False,
     )
 
     K = np.array(dataset.get_category_sizes('train'))
@@ -492,8 +532,5 @@ if __name__ == '__main__':
     diffusion = diffusion.to(device)
     diffusion.eval()
 
-    t_error_comparison(100)
+    t_error_comparison(300, model, diffusion, dataset, timestep=10)
     secmi_attack(model, diffusion, dataset, timestep=10, t_sec=50)
-
-
-
