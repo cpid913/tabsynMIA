@@ -18,6 +18,11 @@ from baselines.tabddpm.models.utils import *
 import src
 from utils_train import make_dataset
 
+def print_result(results):
+    keys = ['auc', 'asr', 'TPR@1%FPR', 'TPR@0.1%FPR', 'threshold']
+    for k, v in results.items():
+        if k in keys:
+            print(f'{k}: {v}')
 
 def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=128, eval=True):
     # load splits
@@ -63,6 +68,11 @@ def secmi_attack(model, diffusion, dataset, timestep=10, t_sec=100, batch_size=1
         plt.ylabel("True Positive Rate")
         plt.legend(loc="lower right")
         plt.show()
+
+        print('#' * 20 + ' SecMI_stat ' + '#' * 20)
+        print_result(stat_result)
+        print('#' * 20 + ' SecMI_NNs ' + '#' * 20)
+        print_result(nns_result)
 
     return member_t_error, nonmember_t_error
 
